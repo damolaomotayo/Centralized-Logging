@@ -1,0 +1,121 @@
+# Project 3 - Centralized Logging: Loki + Promtail + Grafana
+# Everything runs on one EC2 instance. Values come from .env (created by scripts/setup.sh / up.sh).
+#
+# Published to the browser (0.0.0.0, allowed by the security group to "My IP" only):
+#   3000 Grafana   8080 shop control panel   5001 alert inbox
+# Instance-only (127.0.0.1, used by the scripts):
+#   3100 Loki API  9080 Promtail status
+
+name: logging-demo
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  build:
+    context: ./app
+    args:
+      PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+  image: logging-demo-app:1.0
+  restart: unless-stopped
+  mem_limit: 128m
+  logging: *default-logging
+  volumes:
+    - app-logs:/var/log/app
+  healthcheck:
+    test: ["CMD", "python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/health',timeout=3)"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 5s
+
+services:
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:3.4.2}
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    restart: unless-stopped
+    mem_limit: 1g
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+
+  promtail:
+    image: ${PROMTAIL_IMAGE:-grafana/promtail:3.4.2}
+    command: ["-config.file=/etc/promtail/promtail.yaml"]
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *default-logging
+    depends_on:
+      - loki
+    ports:
+      - "127.0.0.1:9080:9080"
+    volumes:
+      - ./promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      - app-logs:/var/log/app:ro
+      - /var/log:/var/log/host:ro
+      - promtail-data:/promtail
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.6.1}
+    restart: unless-stopped
+    mem_limit: 512m
+    logging: *default-logging
+    depends_on:
+      - loki
+    ports:
+      - "0.0.0.0:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD missing - run scripts/up.sh}
+      GF_SERVER_ROOT_URL: http://${PUBLIC_IP:-localhost}:3000/
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_UNIFIED_ALERTING_ENABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/logging-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  shop-api:
+    <<: *app
+    environment:
+      SERVICE_NAME: shop-api
+      PORT: "8080"
+      PAYMENTS_URL: http://payments:9000
+      TRAFFIC: "1"
+    ports:
+      - "0.0.0.0:8080:8080"
+    depends_on:
+      - payments
+
+  payments:
+    <<: *app
+    environment:
+      SERVICE_NAME: payments
+      PORT: "9000"
+
+  alert-receiver:
+    <<: *app
+    environment:
+      SERVICE_NAME: alert-receiver
+      PORT: "5001"
+    ports:
+      - "0.0.0.0:5001:5001"
+
+volumes:
+  loki-data:
+  grafana-data:
+  promtail-data:
+  app-logs:

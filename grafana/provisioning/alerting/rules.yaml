@@ -1,0 +1,139 @@
+# Log-based alert rules (Grafana-managed), evaluated every 10 s against Loki.
+# Each rule: A = LogQL metric query, B = reduce to last value, C = threshold.
+# No "$" in this file: Grafana expands env vars in provisioning files, so the
+# annotations use {{ .Labels.x }} instead of {{ $labels.x }}.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: log-alerts
+    folder: Logging Demo Alerts
+    interval: 10s
+    rules:
+      - uid: high-error-rate
+        title: HighErrorRate
+        condition: C
+        for: 30s
+        noDataState: OK
+        execErrState: OK
+        isPaused: false
+        labels:
+          severity: critical
+          team: demo
+        annotations:
+          summary: More than 5 ERROR log lines per minute across the apps
+          description: Count of level=ERROR lines in the last minute is above 5. Open the dashboard and click a trace_id to follow a failing request.
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: range
+              expr: 'sum(count_over_time({job="apps", level="ERROR"}[1m]))'
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [5]}
+
+      - uid: brute-force-login
+        title: BruteForceLogin
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: OK
+        isPaused: false
+        labels:
+          severity: high
+          team: security
+        annotations:
+          summary: More than 10 failed logins per minute from {{ .Labels.src_ip }}
+          description: Possible password guessing. One alert per source IP (multi-dimensional rule).
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: range
+              expr: 'sum by (src_ip) (count_over_time({job="apps", service="shop-api"} | logfmt | event="login_failed" [1m]))'
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [10]}
+
+      - uid: slow-checkout
+        title: SlowCheckout
+        condition: C
+        for: 30s
+        noDataState: OK
+        execErrState: OK
+        isPaused: false
+        labels:
+          severity: warning
+          team: demo
+        annotations:
+          summary: Checkout p95 latency above 1000 ms (measured from log lines)
+          description: p95 of duration_ms for checkout events over 2 minutes. This is a metric computed from logs.
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: range
+              expr: 'quantile_over_time(0.95, {job="apps", service="shop-api"} | logfmt | event=~"checkout|checkout_failed" | unwrap duration_ms | __error__="" [2m]) by (service)'
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+              settings: {mode: dropNN}
+          - refId: C
+            relativeTimeRange: {from: 0, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [1000]}

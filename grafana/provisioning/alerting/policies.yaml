@@ -1,0 +1,9 @@
+# Route every alert to the webhook. Short timers so the demo is quick.
+apiVersion: 1
+policies:
+  - orgId: 1
+    receiver: demo-webhook
+    group_by: ["grafana_folder", "alertname"]
+    group_wait: 10s
+    group_interval: 30s
+    repeat_interval: 4h

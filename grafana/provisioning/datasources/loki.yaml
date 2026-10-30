@@ -1,0 +1,21 @@
+# Loki datasource. "$$" escapes "$" because Grafana expands env vars in provisioning files.
+apiVersion: 1
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+    jsonData:
+      maxLines: 1000
+      timeout: 60
+      derivedFields:
+        # Turns trace_id=abc123 in any log line into a link that shows every
+        # line (from every service) with the same trace_id.
+        - name: trace_id
+          matcherRegex: 'trace_id=(\w+)'
+          datasourceUid: loki
+          url: '{job="apps"} |= "trace_id=$${__value.raw}"'
+          urlDisplayLabel: Follow this request across services

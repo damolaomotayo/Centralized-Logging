@@ -1,0 +1,52 @@
+# Promtail: tails log files and pushes them to Loki.
+# Reads files only - no Docker socket is mounted (smaller attack surface, and no
+# dependency on the Docker API version).
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /promtail/positions.yaml   # remembers how far each file was read
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # 1) The demo apps (shop-api, payments, alert-receiver) write logfmt lines
+  #    to a shared volume mounted here.
+  - job_name: apps
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: apps
+          env: demo
+          __path__: /var/log/app/*.log
+    pipeline_stages:
+      - logfmt:
+          mapping:
+            ts:
+            level:
+            service:
+      # Only LOW-cardinality fields become labels (indexed). trace_id, user,
+      # src_ip etc. stay in the line and are parsed at query time.
+      - labels:
+          level:
+          service:
+      - timestamp:
+          source: ts
+          format: RFC3339Nano
+
+  # 2) Host logs from the EC2 instance itself (mounted read-only).
+  - job_name: host
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: host
+          log: auth
+          __path__: /var/log/host/auth.log
+      - targets: [localhost]
+        labels:
+          job: host
+          log: syslog
+          __path__: /var/log/host/syslog
